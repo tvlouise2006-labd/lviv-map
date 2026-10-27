@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#09090b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <script>
+    const storedTheme = localStorage.getItem("color-scheme");
+    if (storedTheme === "light" || storedTheme === "dark") {
+      document.querySelector('meta[name="color-scheme"]').content = storedTheme;
+    }
+  </script>
+  <title>LVIV TRANSIT CONTROL // LIVE MONITOR</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="/static/style.css?v=12" />
+</head>
+<body>
+  <div id="app">
+    <!-- Strict Top Command Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="status-badge">
+          <span class="status-dot" id="sse-indicator"></span>
+          <span class="status-label">LIVE</span>
+        </div>
+        <div class="brand-divider hide-xs"></div>
+        <h1 class="brand-title">ЛЬВІВ <span class="hide-sm">ТРАНСПОРТ </span><span class="brand-sub">// КОНТРОЛЬ</span></h1>
+        <div class="telemetry-stats">
+          <div class="stat-item" title="Активні мітки за останні 20 хвилин">
+            <span class="stat-label"><span class="hide-sm">АКТИВНІ </span>МІТКИ</span>
+            <span class="stat-value" id="active-sightings-count">0</span>
+          </div>
+          <div class="stat-item" title="Транспорт на лінії з GPS">
+            <span class="stat-label"><span class="hide-sm">GPS </span>БОРТИ</span>
+            <span class="stat-value" id="live-vehicles-count">0</span>
+          </div>
+          <div class="stat-item hide-mobile">
+            <span class="stat-label">TTL ВІКНО</span>
+            <span class="stat-value">20 ХВ</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="search-box">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            type="search"
+            id="route-filter-input"
+            inputmode="search"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="characters"
+            spellcheck="false"
+            placeholder="Маршрут (46, Т8, ТР30)"
+            aria-label="Фільтр за номером маршруту"
+          />
+          <button type="button" id="clear-route-btn" class="clear-btn hidden" title="Очистити">✕</button>
+        </div>
+
+        <div class="action-buttons">
+          <button type="button" id="locate-me-btn" class="ctrl-btn" title="Моя локація" aria-label="Моя локація">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v3m0 14v3M2 12h3m14 0h3"></path>
+            </svg>
+            <span class="hide-mobile">Геолокація</span>
+          </button>
+
+          <button type="button" id="toggle-vehicles-btn" class="ctrl-btn active" title="Відображення GPS транспорту" aria-label="Відображення GPS транспорту">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="3" width="16" height="15" rx="2"></rect>
+              <path d="M4 11h16M8 18v3m8-3v3"></path>
+            </svg>
+            <span class="hide-mobile">GPS Борти</span>
+          </button>
+
+          <!-- Admin-Only "Нова мітка" button (hidden for regular visitors) -->
+          <button type="button" id="report-btn" class="ctrl-btn primary hidden" title="Додати нову мітку">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span class="hide-xs">Нова мітка</span>
+          </button>
+
+          <button type="button" id="admin-btn" class="ctrl-btn icon-only" title="Вхід адміністратора" aria-label="Вхід адміністратора">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </button>
+
+          <button type="button" id="theme-toggle-btn" class="ctrl-btn icon-only" aria-label="Перемкнути тему" title="Змінити тему">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Workspace: Map + Right Docked Telemetry Panel (or Bottom Sheet on Mobile) -->
+    <div class="workspace">
+      <main id="map-container">
+        <div id="map"></div>
+
+        <!-- Strict Status Legend Bar -->
+        <div class="map-legend">
+          <span class="legend-title hide-xs">СТАТУС:</span>
+          <div class="legend-item"><span class="sq fresh"></span> 0–5хв</div>
+          <div class="legend-item"><span class="sq recent"></span> 5–12хв</div>
+          <div class="legend-item"><span class="sq aging"></span> 12–20хв</div>
+          <div class="legend-sep"></div>
+          <div class="legend-item"><span class="sq tram"></span> Т</div>
+          <div class="legend-item"><span class="sq trolley"></span> ТР</div>
+          <div class="legend-item"><span class="sq bus"></span> А</div>
+        </div>
+      </main>
+
+      <!-- Docked Right Feed Panel / Mobile Bottom Sheet -->
+      <aside class="feed-panel" id="feed-panel">
+        <div class="panel-handle" id="panel-handle" role="button" tabindex="0" aria-label="Змінити розмір панелі">
+          <span class="handle-bar"></span>
+        </div>
+
+        <div class="panel-header" id="panel-header">
+          <div class="panel-title-row">
+            <div class="panel-title-left">
+              <span class="panel-heading">ОПЕРАТИВНА СТРІЧКА</span>
+              <button type="button" id="sheet-toggle-btn" class="sheet-toggle-btn" aria-label="Згорнути або розгорнути стрічку">
+                КАРТА / СПИСОК ↕
+              </button>
+            </div>
+            <a href="https://t.me/kontrollviv" target="_blank" rel="noopener" class="source-link">
+              @kontrollviv
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 17L17 7M7 7h10v10"></path>
+              </svg>
+            </a>
+          </div>
+
+          <div class="segmented-filter" role="tablist">
+            <button type="button" class="seg-btn active" data-type="all">УСІ</button>
+            <button type="button" class="seg-btn" data-type="in_vehicle">НА БОРТУ</button>
+            <button type="button" class="seg-btn" data-type="tram">Т</button>
+            <button type="button" class="seg-btn" data-type="trolleybus">ТР</button>
+            <button type="button" class="seg-btn" data-type="bus">А</button>
+          </div>
+        </div>
+
+        <div class="sightings-list" id="sightings-list">
+          <div class="empty-state">Синхронізація з каналом та GTFS-RT...</div>
+        </div>
+
+        <footer class="panel-disclaimer">
+          <p>
+            Сервіс є виключно агрегатором інформації з відкритих публічних джерел і не несе відповідальності за достовірність повідомлень. Проєкт не збирає персональні дані та створений в ознайомчих цілях.
+          </p>
+        </footer>
+      </aside>
+    </div>
+
+    <!-- Modal Dialog for Reporting Sighting (Admin Only) -->
+    <dialog id="report-dialog" class="modal-dialog">
+      <form id="report-form" method="dialog">
+        <div class="modal-header">
+          <h3>ДОДАТИ ПОВІДОМЛЕННЯ (АДМІН)</h3>
+          <button type="button" id="close-dialog-btn" class="ctrl-btn icon-only" aria-label="Закрити">✕</button>
+        </div>
+        <p class="modal-desc">
+          Введіть текст спостереження. Система визначить маршрут, зупинку та прив'яже мітку до найближчого борту за координатами GPS.
+        </p>
+        <div class="form-group">
+          <label for="report-text">ТЕКСТ ПОВІДОМЛЕННЯ</label>
+          <textarea
+            id="report-text"
+            rows="3"
+            required
+            maxlength="300"
+            placeholder="Зайшли в 8 трамвай на Довженка в сторону центру"
+          ></textarea>
+        </div>
+        <div class="quick-presets">
+          <span class="preset-label">ШАБЛОНИ:</span>
+          <button type="button" class="preset-chip" data-text="Зайшли в 2 трамвай на Дорошенка в сторону Коновальця">Т2 · Дорошенка</button>
+          <button type="button" class="preset-chip" data-text="Контроль у 46 від ДБК на Іскру">А46 · ДБК</button>
+          <button type="button" class="preset-chip" data-text="2 контролери на Митній в сторону медичного">Пл. Митна</button>
+        </div>
+        <div id="report-error" class="form-error hidden"></div>
+        <div class="modal-actions">
+          <button type="button" id="cancel-report-btn" class="ctrl-btn">Скасувати</button>
+          <button type="submit" class="ctrl-btn primary">Відправити</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Admin Login Modal Dialog -->
+    <dialog id="admin-dialog" class="modal-dialog">
+      <form id="admin-form" method="dialog">
+        <div class="modal-header">
+          <h3>АВТОРИЗАЦІЯ АДМІНІСТРАТОРА</h3>
+          <button type="button" id="close-admin-btn" class="ctrl-btn icon-only" aria-label="Закрити">✕</button>
+        </div>
+        <p class="modal-desc">
+          Публічний режим дозволяє лише перегляд карти. Введіть пароль адміністратора для додавання або видалення міток.
+        </p>
+        <div class="form-group">
+          <label for="admin-password">ПАРОЛЬ АДМІНІСТРАТОРА</label>
+          <input
+            type="password"
+            id="admin-password"
+            class="modal-input"
+            required
+            autocomplete="current-password"
+            placeholder="••••••••••••"
+          />
+        </div>
+        <div id="admin-error" class="form-error hidden"></div>
+        <div class="modal-actions">
+          <button type="button" id="cancel-admin-btn" class="ctrl-btn">Скасувати</button>
+          <button type="submit" class="ctrl-btn primary">Увійти</button>
+        </div>
+      </form>
+    </dialog>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="/static/app.js?v=12"></script>
+</body>
+</html>
