@@ -1,9 +1,15 @@
+import hashlib
 import os
-import secrets
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_default_admin_password = os.getenv("ADMIN_PASSWORD", "lviv-admin-2026")
+_default_admin_secret = hashlib.sha256(
+    f"lviv-transit-secret-v1:{_default_admin_password}".encode("utf-8")
+).hexdigest()
+
 
 class Settings(BaseModel):
     # Telegram settings
@@ -20,20 +26,22 @@ class Settings(BaseModel):
     # Sighting lifecycle (minutes) - strictly 20 minutes from channel message post time
     SIGHTING_TTL_MINUTES: int = int(os.getenv("SIGHTING_TTL_MINUTES", "20"))
 
-    # Optional Gemini API key
+    # Optional Gemini API key & model
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
     # Optional CARTO API key
     CARTO_API_KEY: str = os.getenv("CARTO_API_KEY", "")
 
     # Security & Admin settings
-    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "lviv-admin-2026")
-    ADMIN_SECRET_KEY: str = os.getenv("ADMIN_SECRET_KEY", secrets.token_hex(32))
+    ADMIN_PASSWORD: str = _default_admin_password
+    ADMIN_SECRET_KEY: str = os.getenv("ADMIN_SECRET_KEY", _default_admin_secret)
     ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "")  # Comma-separated origins, empty = same-origin only
     ENABLE_SWAGGER_DOCS: bool = os.getenv("ENABLE_SWAGGER_DOCS", "false").lower() == "true"
 
     # Server settings
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
+
 
 settings = Settings()

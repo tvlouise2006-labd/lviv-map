@@ -71,8 +71,20 @@ const state = {
   activePopup: null,
   activePopupSightingId: null,
   isAdmin: false,            // Strict read-only mode by default; only true when authenticated as admin
+  adminToken: localStorage.getItem("lviv_admin_token") || "",
   mapLoaded: false
 };
+
+function getAuthHeaders(includeJson = true) {
+  const headers = {};
+  if (includeJson) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (state.adminToken) {
+    headers["Authorization"] = `Bearer ${state.adminToken}`;
+  }
+  return headers;
+}
 
 const colorSchemeMeta = document.querySelector('meta[name="color-scheme"]');
 const darkMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -952,11 +964,14 @@ async function sendVote(sightingId, direction) {
   try {
     const res = await fetch(`/api/sightings/${encodeURIComponent(sightingId)}/vote`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(true),
+      credentials: "same-origin",
       body: JSON.stringify({ direction }),
     });
     if (res.status === 403) {
       state.isAdmin = false;
+      state.adminToken = "";
+      localStorage.removeItem("lviv_admin_token");
       updateAdminUI();
       await syncSightingsFromServer();
       return;
@@ -1013,12 +1028,19 @@ async function initApp() {
 
   let initialData = null;
   try {
-    const res = await fetch("/api/init");
+    const res = await fetch("/api/init", {
+      headers: getAuthHeaders(false),
+      credentials: "same-origin",
+    });
     initialData = await res.json();
     if (initialData.carto_api_key) {
       CARTO_API_KEY = initialData.carto_api_key;
     }
     state.isAdmin = Boolean(initialData.is_admin);
+    if (!state.isAdmin && state.adminToken) {
+      state.adminToken = "";
+      localStorage.removeItem("lviv_admin_token");
+    }
   } catch (e) {
     console.error("Failed to fetch initial state:", e);
   }
@@ -1271,8 +1293,10 @@ const adminError = document.getElementById("admin-error");
 
 document.getElementById("admin-btn")?.addEventListener("click", async () => {
   if (state.isAdmin) {
-    await fetch("/api/admin/logout", { method: "POST" });
+    await fetch("/api/admin/logout", { method: "POST", credentials: "same-origin" });
     state.isAdmin = false;
+    state.adminToken = "";
+    localStorage.removeItem("lviv_admin_token");
     updateAdminUI();
     return;
   }
@@ -1294,6 +1318,7 @@ adminForm?.addEventListener("submit", async (e) => {
     const res = await fetch("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({ password }),
     });
     const data = await res.json();
@@ -1305,6 +1330,10 @@ adminForm?.addEventListener("submit", async (e) => {
       return;
     }
     state.isAdmin = Boolean(data.is_admin);
+    if (data.token) {
+      state.adminToken = data.token;
+      localStorage.setItem("lviv_admin_token", data.token);
+    }
     if (adminPasswordInput) adminPasswordInput.value = "";
     adminDialog?.close();
     updateAdminUI();
@@ -1347,15 +1376,21 @@ reportForm?.addEventListener("submit", async (e) => {
   try {
     const res = await fetch("/api/report", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(true),
+      credentials: "same-origin",
       body: JSON.stringify({ text }),
     });
     const data = await res.json();
     if (!res.ok) {
       if (res.status === 403) {
         state.isAdmin = false;
+        state.adminToken = "";
+        localStorage.removeItem("lviv_admin_token");
         updateAdminUI();
-        reportDialog?.close();
+        if (reportError) {
+          reportError.textContent = "Сесія адміністратора завершилась — увійдіть повторно";
+          reportError.classList.remove("hidden");
+        }
         return;
       }
       if (reportError) {

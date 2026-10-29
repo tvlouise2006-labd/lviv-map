@@ -32,7 +32,6 @@ class TransitManager:
         self.route_headsigns: Dict[str, List[str]] = defaultdict(list)
         
         self.current_vehicles: Dict[str, VehiclePosition] = {}
-        self.vehicle_history: deque = deque(maxlen=20000) # (timestamp, vehicle_id, route_id, lat, lon)
         self.last_rt_update: float = 0
         self._lock = threading.Lock()
         
@@ -150,6 +149,10 @@ class TransitManager:
                     self.route_number_to_routes[short.lower()].append(route)
             print(f"Loaded {len(self.routes)} routes.")
 
+        # Free temporary shape lookup tables to save RAM on server
+        self.shapes.clear()
+        self.route_shapes.clear()
+
     def find_route(self, number: str, transport_type: Optional[TransportType] = None) -> Optional[Route]:
         """Finds matching Route given a number string like '46', '2', '8', '30' or '1а'."""
         key = number.strip().lower()
@@ -229,9 +232,6 @@ class TransitManager:
                     timestamp=int(v.timestamp) if v.timestamp else now
                 )
                 new_vehicles[vid] = vp
-
-                with self._lock:
-                    self.vehicle_history.append((vp.timestamp, vid, rid, vp.lat, vp.lon))
 
             with self._lock:
                 self.current_vehicles = new_vehicles

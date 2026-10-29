@@ -8,8 +8,12 @@ from backend.config import settings
 from backend.state import state_store
 
 POST_ID_RE = re.compile(r'^"([^"]+)"')
-TEXT_BLOCK_RE = re.compile(
-    r'<div class="tgme_widget_message_text\b[^"]*"[^>]*>(.*?)</div>',
+MAIN_TEXT_BLOCK_RE = re.compile(
+    r'<div class="tgme_widget_message_text\s+js-message_text\b[^"]*"[^>]*>(.*?)</div>',
+    re.DOTALL
+)
+ANY_TEXT_BLOCK_RE = re.compile(
+    r'<div class="tgme_widget_message_text\b(?![^"]*reply_text)[^"]*"[^>]*>(.*?)</div>',
     re.DOTALL
 )
 TIME_RE = re.compile(r'<time\b[^>]*datetime="([^"]+)"')
@@ -56,7 +60,7 @@ def fetch_public_channel_web(channel: str = "kontrollviv") -> List[Dict[str, str
         post_id = id_match.group(1)
 
         time_match = TIME_RE.search(block)
-        text_match = TEXT_BLOCK_RE.search(block)
+        text_match = MAIN_TEXT_BLOCK_RE.search(block) or ANY_TEXT_BLOCK_RE.search(block)
         if not time_match or not text_match:
             continue
 
@@ -96,11 +100,12 @@ class TelegramIngestor:
 
         ingested = 0
         for m in msgs:
+            # Use fast rule-based extraction on initial startup seed so container boot never blocks on LLM API calls
             s = state_store.ingest_raw_message(
                 msg_id=m["post_id"],
                 text=m["text"],
                 posted_at_iso=m["datetime"],
-                use_llm=True
+                use_llm=False
             )
             if s:
                 ingested += 1

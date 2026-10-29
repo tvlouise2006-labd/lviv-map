@@ -178,7 +178,7 @@ class VoteRequest(BaseModel):
 
 
 class ManualReportRequest(BaseModel):
-    text: str = Field(..., min_length=4, max_length=300)
+    text: str = Field(..., min_length=3, max_length=300)
 
 
 @app.post("/api/admin/login")
@@ -186,7 +186,12 @@ async def admin_login(req: AdminLoginRequest, request: Request, response: Respon
     client_ip = get_client_ip(request)
     now = time.time()
 
-    # Prune login attempts older than 60s
+    # Prune login attempts older than 60s (and clean up stale IP keys to prevent memory growth)
+    if len(_login_attempts) > 500:
+        stale_ips = [ip for ip, ts_list in _login_attempts.items() if not ts_list or now - ts_list[-1] >= 60.0]
+        for ip in stale_ips:
+            _login_attempts.pop(ip, None)
+
     _login_attempts[client_ip] = [t for t in _login_attempts[client_ip] if now - t < 60.0]
     if len(_login_attempts[client_ip]) >= MAX_LOGIN_ATTEMPTS_PER_MINUTE:
         raise HTTPException(
@@ -206,11 +211,11 @@ async def admin_login(req: AdminLoginRequest, request: Request, response: Respon
         value=token,
         max_age=ADMIN_TOKEN_TTL_SECONDS,
         httponly=True,
-        samesite="strict",
+        samesite="lax",
         secure=is_https,
         path="/"
     )
-    return {"is_admin": True}
+    return {"is_admin": True, "token": token}
 
 
 @app.post("/api/admin/logout")
@@ -306,7 +311,7 @@ async def submit_manual_report(
 ):
     """Admin-only endpoint to create a new warning on the map."""
     text = req.text.strip()
-    if len(text) < 4:
+    if len(text) < 3:
         raise HTTPException(status_code=400, detail="Повідомлення занадто коротке")
     now_iso = datetime.now(timezone.utc).isoformat()
     msg_id = f"user/{int(time.time() * 1000)}"
@@ -316,10 +321,11 @@ async def submit_manual_report(
         f"❗️ {text}",
         now_iso,
         True,
+        True,
         True
     )
     if not s:
-        raise HTTPException(status_code=400, detail="Не вдалося розпізнати локацію або маршрут у повідомленні")
+        raise HTTPException(status_code=400, detail="Повідомлення заблоковано фільтром безпеки")
 
     state_store.sync_sightings_with_vehicles()
     await state_store.broadcast("sightings_update", {
