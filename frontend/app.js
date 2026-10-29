@@ -64,12 +64,14 @@ const state = {
   markers: new Map(),        // sighting_id -> { marker, el }
   registeredBadges: new Set(),
   selectedSightingId: null,
+  selectedVehicleId: null,
   selectedRouteId: null,
   routeFilterText: localStorage.getItem("lviv_route_filter") || "",
   transportTab: "all",
   showAllVehicles: true,
   activePopup: null,
   activePopupSightingId: null,
+  activeVehiclePopup: null,
   isAdmin: false,            // Strict read-only mode by default; only true when authenticated as admin
   adminToken: localStorage.getItem("lviv_admin_token") || "",
   mapLoaded: false
@@ -190,14 +192,88 @@ function ensureVehicleBadgeImage(label, transportType, dangerAgeClass = "") {
   return badgeId;
 }
 
+// Generate rotating direction arrow icon (pointing North at 0 deg) that orbits around the vehicle badge
+function ensureDirectionArrowImage(transportType, dangerAgeClass = "") {
+  if (!map) return "";
+  const arrowId = `dir_arrow_${transportType}_${dangerAgeClass || "norm"}`;
+  if (state.registeredBadges.has(arrowId) && map.hasImage(arrowId)) {
+    return arrowId;
+  }
+
+  const dangerHex = getDangerColorHex(dangerAgeClass);
+  const fillColor = dangerHex
+    ? dangerHex
+    : transportType === "tram"
+    ? "#ef4444"
+    : transportType === "trolleybus"
+    ? "#38bdf8"
+    : "#22c55e";
+
+  const size = 92;
+  const cx = size / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+
+  // Crisp directional chevron/triangle at the top edge (pointing North = 0 deg)
+  ctx.beginPath();
+  ctx.moveTo(cx, 2);          // Sharp tip pointing forward
+  ctx.lineTo(cx + 11, 17);    // Right wing
+  ctx.lineTo(cx, 13);         // Inner notch
+  ctx.lineTo(cx - 11, 17);    // Left wing
+  ctx.closePath();
+
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+
+  const imgData = ctx.getImageData(0, 0, size, size);
+  try {
+    if (!map.hasImage(arrowId)) {
+      map.addImage(arrowId, imgData, { pixelRatio: 2 });
+    }
+    state.registeredBadges.add(arrowId);
+  } catch (e) {
+    // Ignore duplicate image error
+  }
+  return arrowId;
+}
+
+function shouldShowDirectionArrows() {
+  if (!state.showAllVehicles) return false;
+  return Boolean((state.routeFilterText || "").trim()) || state.transportTab !== "all";
+}
+
+function clearSelectedRouteAndPopups() {
+  state.selectedVehicleId = null;
+  state.selectedSightingId = null;
+  state.activePopupSightingId = null;
+  if (state.activePopup) {
+    state.activePopup.remove();
+    state.activePopup = null;
+  }
+  if (state.activeVehiclePopup) {
+    state.activeVehiclePopup.remove();
+    state.activeVehiclePopup = null;
+  }
+  loadAndDrawRoute(null);
+}
+
 function syncVehiclesLayerVisibility() {
   if (!map || !state.mapLoaded) return;
   const vis = state.showAllVehicles ? "visible" : "none";
+  const arrowVis = shouldShowDirectionArrows() ? "visible" : "none";
   if (map.getLayer("vehicles-symbol")) {
     map.setLayoutProperty("vehicles-symbol", "visibility", vis);
   }
   if (map.getLayer("vehicles-inspector-ring")) {
     map.setLayoutProperty("vehicles-inspector-ring", "visibility", vis);
+  }
+  if (map.getLayer("vehicles-direction-arrow")) {
+    map.setLayoutProperty("vehicles-direction-arrow", "visibility", arrowVis);
   }
 }
 
@@ -256,6 +332,28 @@ function setupMapLayers() {
       });
 
       map.addLayer({
+        id: "vehicles-direction-arrow",
+        type: "symbol",
+        source: "live-vehicles",
+        layout: {
+          visibility: shouldShowDirectionArrows() ? "visible" : "none",
+          "icon-image": ["get", "arrow_icon"],
+          "icon-rotate": ["get", "bearing"],
+          "icon-rotation-alignment": "map",
+          "icon-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10, 0.72,
+            12.5, 0.88,
+            15, 1.05
+          ],
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
+
+      map.addLayer({
         id: "vehicles-symbol",
         type: "symbol",
         source: "live-vehicles",
@@ -280,6 +378,25 @@ function setupMapLayers() {
         const props = feat.properties;
         const coords = feat.geometry.coordinates.slice();
 
+        // Tapping the same vehicle again toggles off its highlighted route & popup
+        if (state.selectedVehicleId === props.vehicle_id && state.selectedRouteId) {
+          clearSelectedRouteAndPopups();
+          return;
+        }
+
+        if (state.activePopup) {
+          state.activePopup.remove();
+          state.activePopup = null;
+          state.activePopupSightingId = null;
+        }
+        if (state.activeVehiclePopup) {
+          state.activeVehiclePopup.remove();
+          state.activeVehiclePopup = null;
+        }
+
+        state.selectedVehicleId = props.vehicle_id;
+        state.selectedSightingId = null;
+
         const routeIdToDraw =
           props.route_id || findMatchingRouteId(props.route_short_name, props.transport_type);
         await loadAndDrawRoute(routeIdToDraw);
@@ -293,7 +410,7 @@ function setupMapLayers() {
           ? `<div style="margin-top:8px;padding:5px 7px;border-radius:3px;border:1px solid ${dColor};background:rgba(220,38,38,0.14);color:${dColor};font-family:var(--font-mono);font-weight:700;font-size:0.70rem;">УВАГА: КОНТРОЛЬ НА БОРТУ</div>`
           : "";
 
-        new maplibregl.Popup({ offset: 12 })
+        state.activeVehiclePopup = new maplibregl.Popup({ offset: 12 })
           .setLngLat(coords)
           .setHTML(`
             <div>
@@ -306,6 +423,22 @@ function setupMapLayers() {
             </div>
           `)
           .addTo(map);
+      });
+
+      // Tapping empty space on the map clears any currently highlighted route & closes popups
+      map.on("click", (e) => {
+        if (e.originalEvent?.target?.closest(".controller-marker, .maplibregl-popup")) {
+          return;
+        }
+        if (map.getLayer("vehicles-symbol")) {
+          const hitVehicles = map.queryRenderedFeatures(e.point, { layers: ["vehicles-symbol"] });
+          if (hitVehicles && hitVehicles.length > 0) {
+            return;
+          }
+        }
+        if (state.selectedRouteId || state.activePopup || state.activeVehiclePopup) {
+          clearSelectedRouteAndPopups();
+        }
       });
 
       map.on("mouseenter", "vehicles-symbol", () => {
@@ -580,6 +713,7 @@ function updateVehiclesGeoJSON(now) {
         : "rgba(220, 38, 38, 0.22)";
 
     const badgeIcon = ensureVehicleBadgeImage(v.short_label, v.transport_type, dangerAgeClass);
+    const arrowIcon = ensureDirectionArrowImage(v.transport_type, dangerAgeClass);
 
     features.push({
       type: "Feature",
@@ -591,10 +725,12 @@ function updateVehiclesGeoJSON(now) {
         short_label: v.short_label,
         transport_type: v.transport_type,
         speed: v.speed,
+        bearing: Number(v.bearing) || 0,
         has_inspectors: hasInspectors,
         danger_color: dangerColor,
         danger_fill: dangerFill,
         badge_icon: badgeIcon,
+        arrow_icon: arrowIcon,
       },
     });
   }
@@ -758,6 +894,10 @@ function renderSightings() {
         `;
         el.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (state.selectedSightingId === s.id && state.selectedRouteId) {
+            clearSelectedRouteAndPopups();
+            return;
+          }
           const latest = state.sightings.find((item) => item.id === s.id) || s;
           focusSighting(latest);
         });
@@ -874,10 +1014,15 @@ async function focusSighting(s) {
     }
   }
 
+  state.selectedVehicleId = null;
   state.selectedSightingId = s.id;
   state.activePopupSightingId = s.id;
   if (state.activePopup) {
     state.activePopup.remove();
+  }
+  if (state.activeVehiclePopup) {
+    state.activeVehiclePopup.remove();
+    state.activeVehiclePopup = null;
   }
 
   const routeIdToDraw = s.route_id || findMatchingRouteId(s.route_short_name, s.transport_type);
@@ -1134,6 +1279,7 @@ document.getElementById("route-filter-input")?.addEventListener("input", (e) => 
   state.routeFilterText = e.target.value.trim();
   localStorage.setItem("lviv_route_filter", state.routeFilterText);
   document.getElementById("clear-route-btn")?.classList.toggle("hidden", !state.routeFilterText);
+  syncVehiclesLayerVisibility();
   highlightRouteFromSearch(state.routeFilterText);
   renderSightings();
   updateVehiclesGeoJSON(performance.now());
@@ -1145,7 +1291,8 @@ document.getElementById("clear-route-btn")?.addEventListener("click", () => {
   const input = document.getElementById("route-filter-input");
   if (input) input.value = "";
   document.getElementById("clear-route-btn")?.classList.add("hidden");
-  loadAndDrawRoute(null);
+  syncVehiclesLayerVisibility();
+  clearSelectedRouteAndPopups();
   renderSightings();
   updateVehiclesGeoJSON(performance.now());
 });
@@ -1155,6 +1302,7 @@ document.querySelectorAll(".segmented-filter .seg-btn").forEach((btn) => {
     document.querySelectorAll(".segmented-filter .seg-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     state.transportTab = btn.dataset.type;
+    syncVehiclesLayerVisibility();
     if (state.routeFilterText) {
       highlightRouteFromSearch(state.routeFilterText);
     }
